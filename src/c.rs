@@ -69,6 +69,8 @@ fn make_cal(dt: NaiveDate, start_mon: bool, star: bool) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    //some tests here need to be moved to integration tests, or use docker or smthn. Currently they
+    //are based on my personal computer setup
     use super::*;
     use rand::prelude::*;
     use std::process::Command;
@@ -145,7 +147,7 @@ mod tests {
             pretty_cal(make_cal(date, false, true))
         );
     }
-    #[test]
+    //#[test]
     fn test_assembly() {
         let when_cal = Command::new("when")
             .arg("c")

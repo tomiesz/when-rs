@@ -1,27 +1,71 @@
 use chrono::prelude::*;
-#[derive(Debug, Clone, PartialEq, Copy)]
+
+#[derive(Debug, Clone)]
+enum CalDate {
+    Date(NaiveDate),
+    Test(RPNExpr),
+    Wildcard(Vec<Token>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RPNExpr {
+    expr: Vec<Token>,
+}
+
+impl RPNExpr {
+    fn from_infix(tokens: Vec<Token>) -> Self {
+        let mut out = Vec::new();
+        let mut op_stack = Vec::new();
+        for t in tokens {
+            match t {
+                Token::Variable(v) => out.push(Token::Variable(v)),
+                Token::Value(x) => out.push(Token::Value(x)),
+                Token::Operator(OperatorType::CloseParenthesis) => loop {
+                    match op_stack.pop() {
+                        None => panic!("Missing opening parenthesis"),
+                        Some(OperatorType::OpenParenthesis) => break,
+                        Some(x) => out.push(Token::Operator(x)),
+                    }
+                },
+                Token::Operator(OperatorType::OpenParenthesis) => {
+                    op_stack.push(OperatorType::OpenParenthesis)
+                }
+                Token::Operator(op) => {
+                    while !op_stack.is_empty() && op.prec() <= op_stack.last().unwrap().prec() {
+                        out.push(Token::Operator(op_stack.pop().unwrap()));
+                    }
+                    op_stack.push(op);
+                }
+                Token::Month(m) => out.push(Token::Month(m)),
+                Token::Wildcard => {
+                    panic!("Wildcards should fall under simple evaluation")
+                }
+            }
+        }
+
+        if op_stack.contains(&OperatorType::OpenParenthesis) {
+            panic!("Missing closing parenthesis.");
+        } else if !op_stack.is_empty() {
+            out.extend(op_stack.drain(..).map(|op| Token::Operator(op)));
+        }
+
+        RPNExpr { expr: out }
+    }
+}
+
 pub struct CalItem<'a> {
-    date: NaiveDate,
+    date: CalDate,
     descr: &'a str,
 }
 
 impl<'a> CalItem<'_> {
-    fn from_line(line: &'a str, eval_time: Timeframe) -> Result<Vec<CalItem>, ParseError> {
-        let mut events = Vec::new();
-        let mut parts = line.splitn(2, ','); // handle no description
-        let (date_text, descr) = (parts.next().unwrap(), parts.next().unwrap());
-        //use parser and convert dates to events
-        if let Ok(dates) = dbg!(CalItem::parse_date(date_text, eval_time)) {
-            for date in dates {
-                events.push(CalItem { date, descr });
-            }
-        }
-        Ok(events)
+    fn from_line(txt: &str) -> Self {
+        todo!()
     }
-    fn parse_date(date: &str, eval_time: Timeframe) -> Result<Vec<NaiveDate>, ParseError> {
-        let mut tokens: Vec<Result<Token, ParseError>> = Vec::new();
+    fn tokenize(text: &str) -> Vec<Token> {
+        let mut tokens: Vec<Token> = Vec::new();
         let mut buf = String::new();
-        for w in date.to_uppercase().split_ascii_whitespace() {
+        for w in text.split_ascii_whitespace() {
             for c in w.chars() {
                 if !buf.is_empty()
                     && CharType::from(c) != CharType::from(buf.chars().last().unwrap())
@@ -41,46 +85,12 @@ impl<'a> CalItem<'_> {
         if !buf.is_empty() {
             tokens.push(Token::from(&buf));
         }
-        let mut eval_date = eval_time.start;
 
-        //simple error handling for now. Returns first error only.
-        let errors: Vec<Result<Token, ParseError>> =
-            tokens.iter().cloned().filter(|t| t.is_err()).collect();
-        if let Some(Err(x)) = errors.get(0) {
-            return Err(*x);
-        }
-        let mut tokens: Vec<Token> = tokens.into_iter().filter_map(|t| t.ok()).collect();
-
-        dbg!(&tokens);
-        //short circuit if date is simple
-        let simple = match tokens[..] {
-            [Token::Value(y), Token::Value(m), Token::Value(d)] => {
-                Some(NaiveDate::from_ymd(y.try_into().unwrap(), m, d))
-            }
-            [Token::Value(y), Token::Month(m), Token::Value(d)] => {
-                Some(NaiveDate::from_ymd(y.try_into().unwrap(), m, d))
-            }
-
-            _ => None,
-        };
-        dbg!(simple);
-        let mut res = Vec::new();
-        if let Some(d) = simple {
-            if d >= eval_time.start && d <= eval_time.end {
-                res.push(d)
-            } else {
-                return Err(ParseError::DateError);
-            }
-        } else {
-            while eval_date <= eval_time.end {
-                eval_date = eval_date.succ();
-            }
-        }
-        Ok(res)
+        tokens
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 enum Token {
     Month(u32),
     Operator(OperatorType),
@@ -122,9 +132,19 @@ enum OperatorType {
     Equal,
     NotEqual,
     And,
+    Not, // this is right associative
     Or,
     OpenParenthesis,
     CloseParenthesis,
+}
+
+impl OperatorType {
+    fn prec(&self) -> u8 {
+        match self {
+            OperatorType::Not => 2,
+            _ => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -142,6 +162,18 @@ enum VariableType {
 }
 
 impl Token {
+    fn get_value(&self) -> Option<u32> {
+        match self {
+            Token::Value(val) => Some(*val),
+            _ => None,
+        }
+    }
+    fn is_value(&self) -> bool {
+        match self {
+            Token::Value(_) => true,
+            _ => false,
+        }
+    }
     fn is_operator(&self) -> bool {
         match self {
             Token::Operator(_) => true,
@@ -154,7 +186,8 @@ impl Token {
             _ => false,
         }
     }
-    fn from(tok: &str) -> Result<Self, ParseError> {
+    fn from(tok: &str) -> Self {
+        let tok_up = tok.to_uppercase();
         let months: [&str; 12] = [
             "JANUARY",
             "FEBRUARY",
@@ -169,43 +202,46 @@ impl Token {
             "NOVEMBER",
             "DECEMBER",
         ];
-        if let Ok(val) = tok.parse::<u32>() {
-            Ok(Token::Value(val))
+        if let Ok(val) = tok_up.parse::<u32>() {
+            Token::Value(val)
         } else {
-            match tok {
-                "*" => Ok(Token::Wildcard),
-                "W" => Ok(Token::Variable(VariableType::DayOfWeek)),
-                "M" => Ok(Token::Variable(VariableType::Month)),
-                "D" => Ok(Token::Variable(VariableType::DayOfMonth)),
-                "Y" => Ok(Token::Variable(VariableType::Year)),
-                "J" => Ok(Token::Variable(VariableType::ModifiedJulianDay)),
-                "A" => Ok(Token::Variable(VariableType::WeekInMonth)),
-                "B" => Ok(Token::Variable(VariableType::RWeekInMonth)),
-                "C" => Ok(Token::Variable(VariableType::NearWeekend)),
-                "E" => Ok(Token::Variable(VariableType::DaysUntilEaster)),
-                "Z" => Ok(Token::Variable(VariableType::DayOfTheYear)),
-                "%" => Ok(Token::Operator(OperatorType::Modulo)),
-                "-" => Ok(Token::Operator(OperatorType::Substraction)),
-                "<" => Ok(Token::Operator(OperatorType::Lesser)),
-                ">" => Ok(Token::Operator(OperatorType::Greater)),
-                "<=" => Ok(Token::Operator(OperatorType::LesserOrEqual)),
-                ">=" => Ok(Token::Operator(OperatorType::GreaterOrEqual)),
-                "=" => Ok(Token::Operator(OperatorType::Equal)),
-                "!=" => Ok(Token::Operator(OperatorType::NotEqual)),
-                "&" => Ok(Token::Operator(OperatorType::And)),
-                "|" => Ok(Token::Operator(OperatorType::Or)),
-                "(" => Ok(Token::Operator(OperatorType::OpenParenthesis)),
-                ")" => Ok(Token::Operator(OperatorType::CloseParenthesis)),
+            match tok_up.as_str() {
+                "*" => Token::Wildcard,
+                "W" => Token::Variable(VariableType::DayOfWeek),
+                "M" => Token::Variable(VariableType::Month),
+                "D" => Token::Variable(VariableType::DayOfMonth),
+                "Y" => Token::Variable(VariableType::Year),
+                "J" => Token::Variable(VariableType::ModifiedJulianDay),
+                "A" => Token::Variable(VariableType::WeekInMonth),
+                "B" => Token::Variable(VariableType::RWeekInMonth),
+                "C" => Token::Variable(VariableType::NearWeekend),
+                "E" => Token::Variable(VariableType::DaysUntilEaster),
+                "Z" => Token::Variable(VariableType::DayOfTheYear),
+                "%" => Token::Operator(OperatorType::Modulo),
+                "-" => Token::Operator(OperatorType::Substraction),
+                "<" => Token::Operator(OperatorType::Lesser),
+                ">" => Token::Operator(OperatorType::Greater),
+                "<=" => Token::Operator(OperatorType::LesserOrEqual),
+                ">=" => Token::Operator(OperatorType::GreaterOrEqual),
+                "=" => Token::Operator(OperatorType::Equal),
+                "!=" => Token::Operator(OperatorType::NotEqual),
+                "&" => Token::Operator(OperatorType::And),
+                "!" => Token::Operator(OperatorType::Not),
+                "|" => Token::Operator(OperatorType::Or),
+                "(" => Token::Operator(OperatorType::OpenParenthesis),
+                ")" => Token::Operator(OperatorType::CloseParenthesis),
                 _ => {
-                    let matching: Vec<&&str> =
-                        months.iter().filter(|b| b.starts_with(tok)).collect();
+                    let matching: Vec<&&str> = months
+                        .iter()
+                        .filter(|b| b.starts_with(tok_up.as_str()))
+                        .collect();
                     if matching.len() == 1 {
                         let pos = months.iter().position(|t| t == matching[0]).unwrap() + 1;
-                        Ok(Token::Month(pos.try_into().unwrap()))
+                        Token::Month(pos.try_into().unwrap())
                     } else if matching.len() > 1 {
-                        Err(ParseError::AmbiguousMonth)
+                        panic!("Cannot determine month: {}", tok);
                     } else {
-                        Err(ParseError::SyntaxError)
+                        panic!("Invalid token {}", tok);
                     }
                 }
             }
@@ -231,82 +267,71 @@ struct Timeframe {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::{cal, timeframe};
-    fn test_tf() -> Timeframe {
-        Timeframe {
-            start: NaiveDate::from_ymd(2022, 4, 1),
-            end: NaiveDate::from_ymd(2022, 4, 30),
-        }
-    }
+    use crate::tokens;
     #[test]
     fn month_matching() {
-        assert_eq!(Ok(Token::Month(4)), Token::from("AP"));
-        assert_eq!(Ok(Token::Month(5)), Token::from("MAY"));
-    }
-    #[test]
-    fn arbitrary_val_matching() {
-        assert_eq!(Ok(Token::Value(10)), Token::from("10"));
-    }
-    #[test]
-    fn special_matching() {
-        assert_eq!(Ok(Token::Wildcard), Token::from("*"));
-        assert_eq!(
-            Ok(Token::Operator(OperatorType::Substraction)),
-            Token::from("-")
-        );
-        assert_eq!(Ok(Token::Variable(VariableType::Month)), Token::from("M"));
-    }
-    #[test]
-    fn basic_dates() {
-        let date = "2022 April 22";
-        let date2 = "2022 4 22";
-        let res = NaiveDate::from_ymd(2022, 4, 22);
-        assert_eq!(CalItem::parse_date(date, test_tf()).expect(""), [res]);
-        assert_eq!(CalItem::parse_date(date2, test_tf()).expect(""), [res]);
+        assert_eq!(Token::Month(4), Token::from("Ap"));
+        assert_eq!(Token::Month(10), Token::from("octo"));
     }
 
     #[test]
-    fn basic() {
-        let txt = "2022 April 22, 1";
-        let item = CalItem {
-            date: NaiveDate::from_ymd(2022, 4, 22),
-            descr: " 1",
-        };
-        assert_eq!(CalItem::from_line(txt, test_tf()).expect(""), [item]);
-        let multi_comma = "2022 4 22, multiple,commas,,,";
-        let commas_item = CalItem {
-            date: NaiveDate::from_ymd(2022, 4, 22),
-            descr: " multiple,commas,,,",
-        };
-        assert_eq!(
-            CalItem::from_line(multi_comma, test_tf()).expect(""),
-            [commas_item]
-        );
+    fn arbitrary_val_matching() {
+        assert_eq!(Token::Value(10), Token::from("10"));
     }
-    //#[test]
-    fn basic_repetition() {
-        let txt2 = "* October 15, Repeating yearly"; // figure the api for this (repeating struct)
-        let tf2 = timeframe!(1996, 1, 1, 2022, 1, 1);
-        let items2: Vec<CalItem> = (0..27)
-            .map(|y| cal!(1996 + y, 10, 15, "Repeating yearly"))
-            .collect();
-        let txt3 = "* * 15, Repeating monthly"; // not present in original when
-        let txt4 = "* * *, Repeating daily"; // not present in original when, maybe add compat flag
-        dbg!(&items2);
-        dbg!(&tf2);
-        assert_eq!(CalItem::from_line(txt2, tf2).expect(""), items2);
+
+    #[test]
+    fn special_matching() {
+        assert_eq!(Token::Wildcard, Token::from("*"));
+        assert_eq!(
+            Token::Operator(OperatorType::Substraction),
+            Token::from("-")
+        );
+        assert_eq!(Token::Variable(VariableType::Month), Token::from("M"));
     }
     #[test]
-    fn basic_conditional_like_syntax() {
-        let item = CalItem {
-            date: NaiveDate::from_ymd(2022, 4, 22),
-            descr: &"1",
-        };
-        let txt1 = "y=2022 & m=April & d=22, 1";
-        let txt2 = "y=2022 & m=4 & d=22, 1";
-        let txt3 = "y =2022 & m= April & d = 22, 1";
-        assert_eq!(CalItem::from_line(txt1, test_tf()).expect(""), [item]);
-        assert_eq!(CalItem::from_line(txt2, test_tf()).expect(""), [item]);
-        assert_eq!(CalItem::from_line(txt3, test_tf()).expect(""), [item]);
+    fn to_tokens() {
+        assert_eq!(
+            CalItem::tokenize("d<18 & d>20"),
+            tokens!("D", "<", "18", "&", "D", ">", "20")
+        );
+        assert_eq!(CalItem::tokenize("ap * *"), tokens!("AP", "*", "*"));
+        assert_eq!(
+            CalItem::tokenize("d =18  d=18 d = 18  d=18"),
+            tokens!("D", "=", "18", "D", "=", "18", "D", "=", "18", "D", "=", "18")
+        );
+    }
+    #[test]
+    #[should_panic(expected = "Invalid token D<18")]
+    fn string_not_split() {
+        Token::from("D<18");
+    }
+    #[test]
+    fn basic_postfix() {
+        let infix = [
+            tokens!("D", ">", "18"),
+            tokens!("!", "(", "d", ">", "18", ")", "&", "(", "d", "<", "20", ")"),
+        ];
+        let postfix = [
+            tokens!("D", "18", ">"),
+            tokens!("d", "18", ">", "!", "d", "20", "<", "&"),
+        ];
+        for (i, p) in infix.into_iter().zip(postfix) {
+            assert_eq!(RPNExpr::from_infix(i), RPNExpr { expr: p })
+        }
+    }
+    #[test]
+    #[should_panic(expected = "Wildcards should fall under simple evaluation")]
+    fn wildcard_panic() {
+        RPNExpr::from_infix(tokens!("2022", "*", "1"));
+    }
+    #[test]
+    #[should_panic(expected = "Missing opening parenthesis")]
+    fn missing_open_parenth() {
+        RPNExpr::from_infix(tokens!("d", "<", "18", "&", ")"));
+    }
+    #[test]
+    #[should_panic(expected = "Missing closing parenthesis")]
+    fn missing_close_parenth() {
+        RPNExpr::from_infix(tokens!("d", "<", "18", "&", "("));
     }
 }

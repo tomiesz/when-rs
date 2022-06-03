@@ -4,7 +4,7 @@ pub fn d() {
     print!("{}", datetime());
 }
 fn datetime() -> String {
-    format!("{}\n", Local::now().format("%a %Y %b %d   %-l:%M"))
+    format!("{}\n", Local::now().format("%a %Y %b %e   %-l:%M"))
 }
 
 #[cfg(test)]
