@@ -20,18 +20,13 @@ impl RPNExpr {
             match t {
                 Token::Variable(v) => out.push(Token::Variable(v)),
                 Token::Value(x) => out.push(Token::Value(x)),
-                Token::Operator(OperatorType::CloseParenthesis) => {
-                    loop {
-                        match op_stack.pop() {
-                            None => panic!("Missing opening parenthesis"),
-                            Some(OperatorType::OpenParenthesis) => break,
-                            Some(x) => out.push(Token::Operator(x)),
-                        }
+                Token::Operator(OperatorType::CloseParenthesis) => loop {
+                    match op_stack.pop() {
+                        None => panic!("Missing opening parenthesis"),
+                        Some(OperatorType::OpenParenthesis) => break,
+                        Some(x) => out.push(Token::Operator(x)),
                     }
-                    /*if let Some(OperatorType::Not) = op_stack.last() {
-                        out.push(Token::Operator(op_stack.pop().unwrap()));
-                    }*/
-                }
+                },
                 Token::Operator(OperatorType::OpenParenthesis) => {
                     op_stack.push(OperatorType::OpenParenthesis)
                 }
@@ -336,12 +331,14 @@ pub mod test {
                 "(", "d", ">", "d", ")", "&", "!", "(", "d", "=", "d", ")", "|", "(", "d", "<",
                 "d", ")"
             ),
+            tokens!("d", ">", "d", "&", "d", "=", "d", "|", "d", "<", "d"),
         ];
         let postfix = [
             tokens!("D", "18", ">"),
             tokens!("d", "18", ">", "!", "d", "20", "<", "&"),
             tokens!("d", "18", ">", "!", "d", "20", "<", "!", "&"),
             tokens!("d", "d", ">", "d", "d", "=", "!", "&", "d", "d", "<", "|"),
+            tokens!("d", "d", ">", "d", "d", "=", "&", "d", "d", "<", "|"),
         ];
         for (i, p) in infix.into_iter().zip(postfix) {
             assert_eq!(RPNExpr::from_infix(i), RPNExpr { expr: p })
