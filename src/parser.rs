@@ -20,20 +20,22 @@ impl RPNExpr {
             match t {
                 Token::Variable(v) => out.push(Token::Variable(v)),
                 Token::Value(x) => out.push(Token::Value(x)),
-                Token::Operator(OperatorType::CloseParenthesis) => loop {
-                    match op_stack.pop() {
-                        None => panic!("Missing opening parenthesis"),
-                        Some(OperatorType::OpenParenthesis) => break,
-                        Some(x) => out.push(Token::Operator(x)),
+                Token::Operator(OperatorType::CloseParenthesis) => {
+                    loop {
+                        match op_stack.pop() {
+                            None => panic!("Missing opening parenthesis"),
+                            Some(OperatorType::OpenParenthesis) => break,
+                            Some(x) => out.push(Token::Operator(x)),
+                        }
                     }
-                },
+                    if let Some(OperatorType::Not) = op_stack.last() {
+                        out.push(Token::Operator(op_stack.pop().unwrap()));
+                    }
+                }
                 Token::Operator(OperatorType::OpenParenthesis) => {
                     op_stack.push(OperatorType::OpenParenthesis)
                 }
                 Token::Operator(op) => {
-                    while !op_stack.is_empty() && op.prec() <= op_stack.last().unwrap().prec() {
-                        out.push(Token::Operator(op_stack.pop().unwrap()));
-                    }
                     op_stack.push(op);
                 }
                 Token::Month(m) => out.push(Token::Month(m)),
@@ -310,10 +312,12 @@ pub mod test {
         let infix = [
             tokens!("D", ">", "18"),
             tokens!("!", "(", "d", ">", "18", ")", "&", "(", "d", "<", "20", ")"),
+            tokens!("!", "(", "d", ">", "18", ")", "&", "!", "(", "d", "<", "20", ")"),
         ];
         let postfix = [
             tokens!("D", "18", ">"),
             tokens!("d", "18", ">", "!", "d", "20", "<", "&"),
+            tokens!("d", "18", ">", "!", "d", "20", "<", "!", "&"),
         ];
         for (i, p) in infix.into_iter().zip(postfix) {
             assert_eq!(RPNExpr::from_infix(i), RPNExpr { expr: p })
