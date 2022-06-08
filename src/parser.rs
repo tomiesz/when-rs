@@ -28,14 +28,22 @@ impl RPNExpr {
                             Some(x) => out.push(Token::Operator(x)),
                         }
                     }
-                    if let Some(OperatorType::Not) = op_stack.last() {
+                    /*if let Some(OperatorType::Not) = op_stack.last() {
                         out.push(Token::Operator(op_stack.pop().unwrap()));
-                    }
+                    }*/
                 }
                 Token::Operator(OperatorType::OpenParenthesis) => {
                     op_stack.push(OperatorType::OpenParenthesis)
                 }
                 Token::Operator(op) => {
+                    while !op_stack.is_empty() && op.prec() <= op_stack.last().unwrap().prec() {
+                        if op == OperatorType::Not && op_stack.last().unwrap() == &OperatorType::Not
+                        {
+                            break;
+                        } else {
+                            out.push(Token::Operator(op_stack.pop().unwrap()));
+                        }
+                    }
                     op_stack.push(op);
                 }
                 Token::Month(m) => out.push(Token::Month(m)),
@@ -48,7 +56,9 @@ impl RPNExpr {
         if op_stack.contains(&OperatorType::OpenParenthesis) {
             panic!("Missing closing parenthesis.");
         } else if !op_stack.is_empty() {
-            out.extend(op_stack.drain(..).map(|op| Token::Operator(op)));
+            while let Some(op) = op_stack.pop() {
+                out.push(Token::Operator(op));
+            }
         }
 
         RPNExpr { expr: out }
@@ -143,8 +153,18 @@ enum OperatorType {
 impl OperatorType {
     fn prec(&self) -> u8 {
         match self {
-            OperatorType::Not => 2,
-            _ => 1,
+            OperatorType::Not => 6,
+            OperatorType::Modulo => 5,
+            OperatorType::Substraction => 4,
+            OperatorType::Greater => 3,
+            OperatorType::GreaterOrEqual => 3,
+            OperatorType::Lesser => 3,
+            OperatorType::LesserOrEqual => 3,
+            OperatorType::Equal => 2,
+            OperatorType::NotEqual => 2,
+            OperatorType::And => 1,
+            OperatorType::Or => 0,
+            _ => 0,
         }
     }
 }
@@ -275,7 +295,6 @@ pub mod test {
         assert_eq!(Token::Month(4), Token::from("Ap"));
         assert_eq!(Token::Month(10), Token::from("octo"));
     }
-
     #[test]
     fn arbitrary_val_matching() {
         assert_eq!(Token::Value(10), Token::from("10"));
@@ -313,11 +332,16 @@ pub mod test {
             tokens!("D", ">", "18"),
             tokens!("!", "(", "d", ">", "18", ")", "&", "(", "d", "<", "20", ")"),
             tokens!("!", "(", "d", ">", "18", ")", "&", "!", "(", "d", "<", "20", ")"),
+            tokens!(
+                "(", "d", ">", "d", ")", "&", "!", "(", "d", "=", "d", ")", "|", "(", "d", "<",
+                "d", ")"
+            ),
         ];
         let postfix = [
             tokens!("D", "18", ">"),
             tokens!("d", "18", ">", "!", "d", "20", "<", "&"),
             tokens!("d", "18", ">", "!", "d", "20", "<", "!", "&"),
+            tokens!("d", "d", ">", "d", "d", "=", "!", "&", "d", "d", "<", "|"),
         ];
         for (i, p) in infix.into_iter().zip(postfix) {
             assert_eq!(RPNExpr::from_infix(i), RPNExpr { expr: p })
