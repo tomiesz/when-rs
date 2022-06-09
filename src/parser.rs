@@ -1,6 +1,6 @@
 use chrono::prelude::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum CalDate {
     Date(NaiveDate),
     Test(RPNExpr),
@@ -60,14 +60,54 @@ impl RPNExpr {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct CalItem<'a> {
     date: CalDate,
     descr: &'a str,
 }
 
-impl<'a> CalItem<'_> {
-    fn from_line(txt: &str) -> Self {
-        todo!()
+impl<'a> CalItem<'a> {
+    fn from_line(txt: &'a str) -> Self {
+        let mut temp_date: Option<CalDate> = None;
+        let (date_str, descr) = txt.split_once(',').expect("Missing comma, no description");
+        let tokens = CalItem::tokenize(date_str);
+        if tokens.len() == 3 {
+            match tokens[..] {
+                [Token::Value(y), Token::Value(m), Token::Value(d)] => {
+                    temp_date = Some(CalDate::Date(NaiveDate::from_ymd(
+                        y.try_into().unwrap(),
+                        m,
+                        d,
+                    )))
+                }
+                [Token::Value(y), Token::Month(m), Token::Value(d)] => {
+                    temp_date = Some(CalDate::Date(NaiveDate::from_ymd(
+                        y.try_into().unwrap(),
+                        m,
+                        d,
+                    )))
+                }
+                _ => {
+                    if tokens.contains(&Token::Wildcard)
+                        && tokens.iter().any(|t| !t.is_operator() && !t.is_variable())
+                    {
+                        // if string contains 3 items, only wildcard and Value/Month then it must
+                        // be a wildcard, otherwise it's a mixup in syntax
+                        temp_date = Some(CalDate::Wildcard(tokens));
+                    } else {
+                        //malformed date
+                        panic!("Malformed date string {}", date_str);
+                    }
+                }
+            }
+        } else if tokens.iter().any(|t| t.is_operator()) {
+            //condition (not checked for correctness)
+            temp_date = Some(CalDate::Test(RPNExpr::from_infix(tokens)));
+        }
+        CalItem {
+            date: temp_date.unwrap(),
+            descr: descr.trim(),
+        }
     }
     fn tokenize(text: &str) -> Vec<Token> {
         let mut tokens: Vec<Token> = Vec::new();
@@ -194,6 +234,12 @@ impl Token {
     fn is_operator(&self) -> bool {
         match self {
             Token::Operator(_) => true,
+            _ => false,
+        }
+    }
+    fn is_variable(&self) -> bool {
+        match self {
+            Token::Variable(_) => true,
             _ => false,
         }
     }
@@ -358,5 +404,97 @@ pub mod test {
     #[should_panic(expected = "Missing closing parenthesis")]
     fn missing_close_parenth() {
         RPNExpr::from_infix(tokens!("d", "<", "18", "&", "("));
+    }
+    #[test]
+    fn create_simple_date() {
+        assert_eq!(
+            CalItem::from_line("2022 Octo 05, simple date with month name"),
+            CalItem {
+                date: CalDate::Date(NaiveDate::from_ymd(2022, 10, 05)),
+                descr: "simple date with month name"
+            }
+        );
+        assert_eq!(
+            CalItem::from_line("2022 10 05, simple date"),
+            CalItem {
+                date: CalDate::Date(NaiveDate::from_ymd(2022, 10, 05)),
+                descr: "simple date"
+            }
+        );
+    }
+    #[test]
+    fn create_expression() {
+        assert_eq!(
+            CalItem::from_line("y=2022 & m=10 & d=15, simple expr"),
+            CalItem {
+                date: CalDate::Test(RPNExpr {
+                    expr: tokens!("y", "2022", "=", "m", "10", "=", "&", "d", "15", "=", "&")
+                }),
+                descr: "simple expr"
+            }
+        );
+
+        assert_eq!(
+            CalItem::from_line("y=2022 & m=10 & d>10 & d<15, conditional"),
+            CalItem {
+                date: CalDate::Test(RPNExpr {
+                    expr: tokens!(
+                        "y", "2022", "=", "m", "10", "=", "&", "d", "10", ">", "&", "d", "15", "<",
+                        "&"
+                    )
+                }),
+                descr: "conditional"
+            }
+        );
+    }
+    #[test]
+    fn create_wildcard() {
+        assert_eq!(
+            CalItem::from_line("* 10 15, wildcard year"),
+            CalItem {
+                date: CalDate::Wildcard(tokens!("*", "10", "15")),
+                descr: "wildcard year"
+            }
+        );
+
+        assert_eq!(
+            CalItem::from_line("2022 * 15, wildcard month"),
+            CalItem {
+                date: CalDate::Wildcard(tokens!("2022", "*", "15")),
+                descr: "wildcard month"
+            }
+        );
+        assert_eq!(
+            CalItem::from_line("2022 10 *, wildcard day"),
+            CalItem {
+                date: CalDate::Wildcard(tokens!("2022", "10", "*")),
+                descr: "wildcard day"
+            }
+        );
+    }
+    #[test]
+    fn additional_wildcards() {
+        //this is not in the original program
+        assert_eq!(
+            CalItem::from_line("2022 * *, wildcard every day of year"),
+            CalItem {
+                date: CalDate::Wildcard(tokens!("2022", "*", "*")),
+                descr: "wildcard every day of year"
+            }
+        );
+        assert_eq!(
+            CalItem::from_line("* * *, wildcard every day"),
+            CalItem {
+                date: CalDate::Wildcard(tokens!("*", "*", "*")),
+                descr: "wildcard every day"
+            }
+        );
+        assert_eq!(
+            CalItem::from_line("* * 10, wildcard every tenth day of month"),
+            CalItem {
+                date: CalDate::Wildcard(tokens!("*", "*", "10")),
+                descr: "wildcard every tenth day of month"
+            }
+        );
     }
 }
