@@ -1,16 +1,15 @@
 use chrono::prelude::*;
 use num_traits::FromPrimitive;
 
-pub fn c() {
-    print!("{}", assemble_calendar());
+pub fn c(today: NaiveDate) {
+    print!("{}", assemble_calendar(today));
 }
 
-fn assemble_calendar() -> String {
+fn assemble_calendar(today: NaiveDate) -> String {
     //fix the star bullshit idk
-    let dt = Local::today().naive_local();
-    let prev = make_cal(dt.with_month(dt.month() - 1).unwrap(), false, false);
-    let cur = make_cal(dt, false, true);
-    let next = make_cal(dt.with_month(dt.month() + 1).unwrap(), false, false);
+    let prev = make_cal(today.with_month(today.month() - 1).unwrap(), false, false);
+    let cur = make_cal(today, false, true);
+    let next = make_cal(today.with_month(today.month() + 1).unwrap(), false, false);
     let mut combined = String::new();
     for x in 0..=6 {
         combined.push_str(format!("{}  {}  {}\n", prev[x], cur[x], next[x]).as_str());
@@ -146,14 +145,5 @@ mod tests {
             String::from_utf8(random_cal.stdout).unwrap(),
             pretty_cal(make_cal(date, false, true))
         );
-    }
-    //#[test]
-    fn test_assembly() {
-        let when_cal = Command::new("when")
-            .arg("c")
-            .output()
-            .expect("Failed to execute");
-        let cal_assemble = assemble_calendar();
-        assert_eq!(String::from_utf8(when_cal.stdout).unwrap(), cal_assemble);
     }
 }

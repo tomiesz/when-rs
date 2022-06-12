@@ -1,7 +1,7 @@
 use chrono::prelude::*;
 
-pub fn j() {
-    print!("{}", j_format(chrono::Local::today().naive_local()));
+pub fn j(today: NaiveDate) {
+    print!("{}", j_format(today));
 }
 
 fn j_format(date: NaiveDate) -> String {
