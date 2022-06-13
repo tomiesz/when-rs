@@ -28,6 +28,7 @@ fn main() {
     } else {
         chrono::Local::today().naive_local()
     };
+    dbg!(&eval_date);
     match cli.command {
         'i' => i(eval_date), //default behaviour,
         'c' => c(eval_date), //print calendar,
@@ -48,4 +49,14 @@ pub struct Args {
     pub command: char,
     #[clap(long)]
     pub now: Option<String>,
+    #[clap(long)]
+    pub language: Option<String>,
+    #[clap(long, default_value = "14")]
+    pub future: u32,
+    #[clap(long, default_value = "14")]
+    pub past: u32,
+    #[clap(long)]
+    pub calendar: std::path::PathBuf,
+    #[clap(long)]
+    pub editor: String,
 }
